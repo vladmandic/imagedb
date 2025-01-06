@@ -108,7 +108,7 @@ class ImageDB:
         except Exception:
             pass
 
-    def utf_decode(self, s: bytes): # decode byte-encoded exif metadata
+    def _utf_decode(self, s: bytes): # decode byte-encoded exif metadata
         remove_prefix = lambda text, prefix: text[len(prefix):] if text.startswith(prefix) else text # pylint: disable=unnecessary-lambda-assignment
         for encoding in ['utf-8', 'utf-16', 'ascii', 'latin_1', 'cp1252', 'cp437']: # try different encodings
             try:
@@ -122,7 +122,7 @@ class ImageDB:
                 pass
         return ''
 
-    def get_metadata(self, image: Image.Image):
+    def _get_metadata(self, image: Image.Image):
         try:
             exif = image._getexif() # pylint: disable=protected-access
         except Exception:
@@ -131,14 +131,14 @@ class ImageDB:
             return ''
         for k, v in exif.items():
             if k == 37510: # comment
-                return self.utf_decode(v)
+                return self._utf_decode(v)
         return ''
 
-    def enum_folder(self, folder: str, recursive: bool=True):
+    def _enum_folder(self, folder: str, recursive: bool=True):
         def file_iterator(folder, recursive): # actual iterator
             for f in os.scandir(folder):
                 if f.is_dir() and recursive:
-                    yield from self.enum_folder(f.path)
+                    yield from self._enum_folder(f.path)
                 if f.is_file() and os.path.splitext(f.name)[1].lower() in ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff'):
                     yield f
 
@@ -160,7 +160,7 @@ class ImageDB:
                         'size': stat.st_size,
                         'width': image.width,
                         'height': image.height,
-                        'meta': self.get_metadata(image),
+                        'meta': self._get_metadata(image),
                         'ts': time.time(),
                     })
                     image.close()
@@ -171,12 +171,12 @@ class ImageDB:
     def add_folder(self, folder: str, recursive: bool=True, index: bool=True):
         log.debug(f'ImageDB add: folder={folder} recursive={recursive} index={index} force={self.force}')
         if self.force:
-            self.table.add(self.enum_folder(folder, recursive=recursive), on_bad_vectors='drop') # add using batch iterator
+            self.table.add(self._enum_folder(folder, recursive=recursive), on_bad_vectors='drop') # add using batch iterator
         else:
             self.table.merge_insert('"?table?".uri') \
                 .when_matched_update_all() \
                 .when_not_matched_insert_all() \
-                .execute(self.enum_folder(folder, recursive=recursive), on_bad_vectors='drop') # sort-of-upsert using batch iterator
+                .execute(self._enum_folder(folder, recursive=recursive), on_bad_vectors='drop') # sort-of-upsert using batch iterator
         if index:
             self.index()
 
