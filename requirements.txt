@@ -1,0 +1,20 @@
+# torch uri
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+# shared requirements
+open_clip_torch
+tqdm
+rich
+Pillow
+numpy
+pandas
+transformers
+torch
+
+# actual packages
+faiss-cpu
+lancedb
+
+# linter
+ruff
+pylint
