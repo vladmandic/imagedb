@@ -45,11 +45,8 @@ class ImageDBResult():
 
         @property
         def image(self):
-            if not self.exists:
-                return None
-            if self._image:
-                return self._image
-            self._image = Image.open(uri)
+            if not self._image and self.exists:
+                self._image = Image.open(uri)
             return self._image
 
     def __str__(self):
@@ -231,7 +228,7 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.ERROR, format='%(asctime)s %(levelname)s: %(message)s')
     log.setLevel(logging.DEBUG)
     log.info('ImageDB start')
-    parser = argparse.ArgumentParser(description = 'imagedb')
+    parser = argparse.ArgumentParser(description = 'ImageDB-Lance')
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--search', action='store_true', help='run search by prompt, image or metadata')
     group.add_argument('--index', action='store_true', help='index images in specified folders')
