@@ -1,6 +1,7 @@
 # https://lancedb.github.io/lancedb/
 
 from typing import Union, TYPE_CHECKING
+from dataclasses import dataclass
 from functools import partial
 from datetime import datetime
 import os
@@ -8,6 +9,7 @@ import re
 import time
 import json
 import logging
+import itertools
 from PIL import Image
 from tqdm import tqdm
 
@@ -25,6 +27,7 @@ log = logging.getLogger('__name__')
 ImageDBModels = [{'id': 0, 'name': 'ViT-B-16', 'pretrained': 'laion2b_s34b_b88k'}]
 
 
+@dataclass
 class ImageDBResult():
     def __init__(self, uri, vector, size, mtime, width, height, meta, _distance:float=0, _relevance_score:float=0, _score:float=0, ts:float=0): # pylint: disable=unused-argument
         self.folder = os.path.dirname(uri)
@@ -38,10 +41,16 @@ class ImageDBResult():
         self.width = width
         self.height = height
         self.meta = meta
+        self._image = None
 
         @property
         def image(self):
-            return Image.open(uri) if self.exists else None
+            if not self.exists:
+                return None
+            if self._image:
+                return self._image
+            self._image = Image.open(uri)
+            return self._image
 
     def __str__(self):
         s = f'folder="{self.folder}" file="{self.file}" size={self.size} mtime="{self.mtime}" exists={self.exists} image={self.width}x{self.height}'
@@ -129,31 +138,38 @@ class ImageDB:
         return ''
 
     def enum_folder(self, folder: str, recursive: bool=True):
-        batch_num = 0
-        entries = []
+        def file_iterator(folder, recursive): # actual iterator
+            for f in os.scandir(folder):
+                if f.is_dir() and recursive:
+                    yield from self.enum_folder(f.path)
+                if f.is_file() and os.path.splitext(f.name)[1].lower() in ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff'):
+                    yield f
+
         log.debug(f'ImageDB analyze: folder="{folder}"')
-        for f in os.scandir(folder):
-            if f.is_dir() and recursive:
-                yield from self.enum_folder(f.path)
-            if f.is_file() and os.path.splitext(f.name)[1].lower() in ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff'):
-                batch_num += 1
-                stat = os.stat(f.path)
-                image = Image.open(f.path)
-                entries.append({
-                    'uri': f.path,
-                    'mtime': stat.st_mtime,
-                    'size': stat.st_size,
-                    'width': image.width,
-                    'height': image.height,
-                    'meta': self.get_metadata(image),
-                    'ts': time.time(),
-                })
-                image.close()
-            if batch_num >= self.batch:
-                yield entries
-                entries = []
-                batch_num = 0
-        yield entries
+        file_iter = file_iterator(folder, recursive)
+
+        while True: # generator-iterator that returns batches of images
+            batch_results = list(itertools.islice(file_iter, self.batch))
+            if not batch_results:
+                break
+            entries = []
+            for batch_file in batch_results:
+                try:
+                    stat = os.stat(batch_file.path)
+                    image = Image.open(batch_file.path)
+                    entries.append({
+                        'uri': batch_file.path,
+                        'mtime': stat.st_mtime,
+                        'size': stat.st_size,
+                        'width': image.width,
+                        'height': image.height,
+                        'meta': self.get_metadata(image),
+                        'ts': time.time(),
+                    })
+                    image.close()
+                except Exception:
+                    pass
+            yield entries
 
     def add_folder(self, folder: str, recursive: bool=True, index: bool=True):
         log.debug(f'ImageDB add: folder={folder} recursive={recursive} index={index} force={self.force}')
@@ -217,9 +233,9 @@ if __name__ == '__main__':
     log.info('ImageDB start')
     parser = argparse.ArgumentParser(description = 'imagedb')
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('--search', action='store_true', help='run search')
-    group.add_argument('--index', action='store_true', help='run indexing')
-    group.add_argument('--list', action='store_true', help='list available models')
+    group.add_argument('--search', action='store_true', help='run search by prompt, image or metadata')
+    group.add_argument('--index', action='store_true', help='index images in specified folders')
+    group.add_argument('--list', action='store_true', help='list available pretrained models')
     parser.add_argument('--db', type=str, default='lancedb', help='database folder path')
     parser.add_argument('--id', type=int, default=0, help='model id')
     parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda', 'ipu', 'xpu', 'mkldnn', 'opengl', 'opencl', 'ideep', 'hip', 've', 'fpga', 'maia', 'xla', 'lazy', 'vulkan', 'mps', 'meta', 'hpu', 'mtia', 'privateuseone'], help='device to use')
@@ -227,6 +243,7 @@ if __name__ == '__main__':
     parser.add_argument('--overwrite', action='store_true', help='index: overwrite database')
     parser.add_argument('--force', action='store_true', help='index: force add to database without duplicate check')
     parser.add_argument('--recursive', action='store_true', help='index: recursive folder indexing')
+    parser.add_argument('--batch', type=int, default=16, help='index: batch size')
     parser.add_argument('--condition', type=str, default='', help='search: additional search condition, e.g. "width>1024"')
     parser.add_argument('--limit', type=int, default=20, help='search: limit number of results')
     parser.add_argument('--repeat', type=int, default=1, help='search: repeat search n times for benchmark')
@@ -249,7 +266,7 @@ if __name__ == '__main__':
             folder=args.db,
             device=args.device,
             dtype=args.dtype,
-            batch=16,
+            batch=args.batch,
             overwrite=args.overwrite,
             force=args.force,
             config=ImageDBModels[args.id],
@@ -273,6 +290,8 @@ if __name__ == '__main__':
             log.info(f'Index end: images={db.count-starting_n} total={db.count} time={t1-t0:.3f} its={(db.count-starting_n)/(t1-t0):.2f}')
 
     if args.search:
+        if len(args.input) == 0:
+            log.error('Search: no input query')
         for input_query in args.input:
             if not input_query or len(input_query) == 0:
                 continue

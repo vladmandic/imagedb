@@ -27,6 +27,7 @@ pip install -r requirements.txt
 > python imagedb-lancedb.py --help  
 > python imagedb-lance.py --index /home/vlado/dev/images/ --force  
 > python imagedb-lance.py --search /home/vlado/dev/images/Siamese_100.jpg  
+> python imagedb-lance.py --search "photo of siamese cat" --condition "width > 256 AND size > 131072"  
 
 *Note*: More feature-rich than Faiss due to presence of unified store and hybrid search as well as conditional filters  
 *Dependencies*:
